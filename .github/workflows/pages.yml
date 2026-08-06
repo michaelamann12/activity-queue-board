@@ -1,0 +1,55 @@
+name: Deploy queue board to Pages
+
+# WHY THIS FILE EXISTS (2026-08-06)
+#
+# GitHub's built-in "pages build and deployment" workflow is hardcoded to CANCEL the
+# in-flight deploy whenever a new push lands. The queue board is published by a
+# LaunchAgent (com.coursemojo.queueboard) that pushes frequently, and deploy runs can
+# sit QUEUED for 9+ minutes when GitHub's runner queue is busy. The result: every
+# deploy was killed before it published — 87 of 100 consecutive runs `cancelled` — and
+# the live site froze 3.5 hours behind while publish_queue_board.sh kept correctly
+# logging "Published (remote confirmed)". The push always succeeded; the DEPLOY died.
+#
+# Widening the publish interval only papers over this: it bets that the interval is
+# longer than GitHub's queue wait, and that number is not ours to control. This file
+# removes the race instead of trying to out-time it.
+#
+# The fix is `cancel-in-progress: false` below. A run that has STARTED is allowed to
+# finish and publish. Expect to still see some `cancelled` runs — GitHub keeps only one
+# PENDING run per concurrency group, so a newer push supersedes an older waiting one.
+# That is correct and desirable: the freshest snapshot wins, and a deploy always lands.
+# A cancelled *pending* run is healthy; a cancelled *in-progress* run is the bug.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      # The repo root IS the site: a single index.html plus .nojekyll. No build step,
+      # nothing to compile — uploading the checkout as-is is the whole deployment.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
